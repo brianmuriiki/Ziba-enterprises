@@ -1,0 +1,4 @@
+[functions.server]
+# The Edge Function validates bearer tokens and admin roles itself.
+# Disable gateway JWT verification so browser OPTIONS preflights reach CORS middleware.
+verify_jwt = false
