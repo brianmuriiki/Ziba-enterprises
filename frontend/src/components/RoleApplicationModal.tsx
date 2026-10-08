@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { supabase } from "../lib/supabase";
+import { db } from "../lib/client";
 import { useAuth } from "../lib/auth-context";
 
 type Role = "seller" | "landlord" | "service_provider";
+type ApplicationRole = Role | "all";
 
 interface Props {
-  role: Role;
+  role: ApplicationRole;
   onClose: () => void;
   page?: boolean;
 }
@@ -15,16 +16,20 @@ const ROLE_LABELS: Record<Role, string> = {
   landlord: "Landlord",
   service_provider: "Service Provider",
 };
+const APPLICATION_LABELS: Record<ApplicationRole, string> = { ...ROLE_LABELS, all: "All Roles" };
 
 const ROLE_DESCRIPTIONS: Record<Role, string> = {
   seller: "List and sell physical products on Ziba. Requires identity verification.",
-  landlord: "List rental properties. Requires identity verification to prevent fraud.",
+  landlord: "List homes for rent or sale. Requires identity verification to prevent fraud.",
   service_provider: "Offer professional services. Lighter verification — certificates only if your service is regulated.",
+};
+const APPLICATION_DESCRIPTIONS: Record<ApplicationRole, string> = {
+  ...ROLE_DESCRIPTIONS,
+  all: "Apply as a seller, landlord, and service provider together. Admin access is excluded.",
 };
 
 export default function RoleApplicationModal({ role, onClose, page = false }: Props) {
   const { profile, refreshProfile } = useAuth();
-  const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -45,7 +50,7 @@ export default function RoleApplicationModal({ role, onClose, page = false }: Pr
     if (!profile) throw new Error("Your profile is not ready. Please sign in again.");
     const ext = file.name.split(".").pop();
     const path = `verification/${profile.id}/${docType}-${Date.now()}.${ext}`;
-    const { error } = await supabase.storage.from("private-verification-docs").upload(path, file, { upsert: true });
+    const { error } = await db.storage.from("private-verification-docs").upload(path, file, { upsert: true });
     if (error) throw new Error(error.message);
     return path;
   }
@@ -57,75 +62,42 @@ export default function RoleApplicationModal({ role, onClose, page = false }: Pr
     setLoading(true);
 
     try {
-      if (!isSP && (!legalName.trim() || !phone.trim() || !idFile || !idBackFile)) {
+      if (needsIdentity && (!legalName.trim() || !phone.trim() || !idFile || !idBackFile)) {
         throw new Error("Legal name, phone, and both sides of your government ID are required.");
       }
-      const { data: existingRole, error: lookupError } = await supabase.from("user_roles").select("id,status").eq("profile_id", profile.id).eq("role", role).maybeSingle();
-      if (lookupError) throw new Error(lookupError.message);
-      if (existingRole?.status === "pending") throw new Error("Your application is already being reviewed.");
-      if (existingRole?.status === "approved") throw new Error("This role is already approved for your account.");
-      const roleData = {
-        profile_id: profile.id,
-        role,
-        status: "pending",
-        application_data: isSP
+      const requestedRoles: Role[] = role === "all" ? ["seller", "landlord", "service_provider"] : [role];
+      const eligibleRoles: Role[] = [];
+      for (const requestedRole of requestedRoles) {
+        const { data: existingRole, error: lookupError } = await db.from("user_roles").select("id,status").eq("profile_id", profile.id).eq("role", requestedRole).maybeSingle();
+        if (lookupError) throw new Error(lookupError.message);
+        if (existingRole?.status === "pending" || existingRole?.status === "approved") continue;
+        const applicationData = requestedRole === "service_provider"
           ? { linkedin_url: linkedinUrl.trim() }
-          : { legal_name: legalName.trim(), business_name: businessName.trim(), phone: phone.trim() },
-      };
-      const roleWrite = existingRole
-        ? await supabase.from("user_roles").update({ status: "pending", application_data: roleData.application_data }).eq("id", existingRole.id)
-        : await supabase.from("user_roles").insert(roleData);
-      if (roleWrite.error) throw new Error(roleWrite.error.message);
-
-      // Upload documents
-      if (idFile) {
-        const path = await uploadDoc(idFile, "government-id");
-        {
-          const { error } = await supabase.from("verification_docs").insert({
-            profile_id: profile.id,
-            role,
-            doc_type: "government_id",
-            storage_path: path,
-          });
-          if (error) throw new Error(error.message);
-        }
+          : { legal_name: legalName.trim(), business_name: businessName.trim(), phone: phone.trim() };
+        const roleWrite = existingRole
+          ? await db.from("user_roles").update({ status: "pending", application_data: applicationData }).eq("id", existingRole.id)
+          : await db.from("user_roles").insert({ profile_id: profile.id, role: requestedRole, status: "pending", application_data: applicationData });
+        if (roleWrite.error) throw new Error(roleWrite.error.message);
+        eligibleRoles.push(requestedRole);
       }
+      if (!eligibleRoles.length) throw new Error("All selected roles are already approved or under review.");
 
-      if (idBackFile) {
-        const path = await uploadDoc(idBackFile, "government-id-back");
-        const { error } = await supabase.from("verification_docs").insert({ profile_id: profile.id, role, doc_type: "government_id_back", storage_path: path });
+      const documentRows: { doc_type: string; file: File | null; path?: string; roles: Role[] }[] = [
+        { doc_type: "government_id", file: idFile, roles: eligibleRoles.filter((item) => item !== "service_provider") },
+        { doc_type: "government_id_back", file: idBackFile, roles: eligibleRoles.filter((item) => item !== "service_provider") },
+        { doc_type: "selfie", file: selfieFile, roles: eligibleRoles.filter((item) => item !== "service_provider") },
+        { doc_type: "professional_certificate", file: certFile, roles: eligibleRoles.filter((item) => item === "service_provider") },
+      ];
+      for (const doc of documentRows) {
+        if (!doc.file || !doc.roles.length) continue;
+        doc.path = await uploadDoc(doc.file, doc.doc_type);
+        const { error } = await db.from("verification_docs").insert(doc.roles.map((requestedRole) => ({ profile_id: profile.id, role: requestedRole, doc_type: doc.doc_type, storage_path: doc.path })));
         if (error) throw new Error(error.message);
-      }
-
-      if (selfieFile) {
-        const path = await uploadDoc(selfieFile, "selfie");
-        {
-          const { error } = await supabase.from("verification_docs").insert({
-            profile_id: profile.id,
-            role,
-            doc_type: "selfie",
-            storage_path: path,
-          });
-          if (error) throw new Error(error.message);
-        }
-      }
-
-      if (certFile) {
-        const path = await uploadDoc(certFile, "certificate");
-        {
-          const { error } = await supabase.from("verification_docs").insert({
-            profile_id: profile.id,
-            role,
-            doc_type: "professional_certificate",
-            storage_path: path,
-          });
-          if (error) throw new Error(error.message);
-        }
       }
 
       // Update profile phone if provided
       if (phone && phone !== profile.phone) {
-        await supabase.from("profiles").update({ phone, full_name: legalName }).eq("id", profile.id);
+        await db.from("profiles").update({ phone, full_name: legalName }).eq("id", profile.id);
       }
 
       await refreshProfile();
@@ -137,7 +109,8 @@ export default function RoleApplicationModal({ role, onClose, page = false }: Pr
     setLoading(false);
   }
 
-  const isSP = role === "service_provider";
+  const includesServiceRole = role === "service_provider" || role === "all";
+  const needsIdentity = role !== "service_provider";
 
   return (
     <div className={page ? "px-4 py-8 md:py-12" : "fixed inset-0 z-50 flex items-center justify-center p-4"} onClick={page ? undefined : onClose}>
@@ -154,9 +127,9 @@ export default function RoleApplicationModal({ role, onClose, page = false }: Pr
 
           <div className="mb-6">
             <div className="font-display text-2xl font-semibold mb-1" style={{ color: "var(--foreground)" }}>
-              Apply as {ROLE_LABELS[role]}
+              Apply as {APPLICATION_LABELS[role]}
             </div>
-            <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>{ROLE_DESCRIPTIONS[role]}</p>
+            <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>{APPLICATION_DESCRIPTIONS[role]}</p>
           </div>
 
           {done ? (
@@ -166,7 +139,7 @@ export default function RoleApplicationModal({ role, onClose, page = false }: Pr
               </div>
               <div className="font-display text-xl font-semibold mb-2" style={{ color: "var(--foreground)" }}>Application submitted</div>
               <p className="text-sm mb-6" style={{ color: "var(--muted-foreground)" }}>
-                Your application to become a {ROLE_LABELS[role]} is under review. We’ll notify you when there’s an update.
+                {role === "all" ? "Your applications for all eligible roles are under review." : `Your application to become a ${APPLICATION_LABELS[role]} is under review.`} We’ll notify you when there’s an update.
               </p>
               <button onClick={onClose} className="px-6 py-2.5 rounded-full text-sm font-semibold" style={{ backgroundColor: "var(--primary)", color: "#fff" }}>
                 Done
@@ -187,7 +160,7 @@ export default function RoleApplicationModal({ role, onClose, page = false }: Pr
                 />
               </div>
 
-              {!isSP && (
+              {needsIdentity && (
                 <div>
                   <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--foreground)" }}>
                     Business Name <span style={{ color: "var(--muted-foreground)" }}>(optional)</span>
@@ -214,7 +187,7 @@ export default function RoleApplicationModal({ role, onClose, page = false }: Pr
                 />
               </div>
 
-              {!isSP && (
+              {needsIdentity && (
                 <>
                   <div>
                     <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--foreground)" }}>
@@ -250,7 +223,7 @@ export default function RoleApplicationModal({ role, onClose, page = false }: Pr
                 </>
               )}
 
-              {isSP && (
+              {includesServiceRole && (
                 <>
                   <div>
                     <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--foreground)" }}>

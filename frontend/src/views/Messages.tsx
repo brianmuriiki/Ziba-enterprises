@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { supabase } from "../lib/supabase";
+import { db } from "../lib/client";
 import { useAuth } from "../lib/auth-context";
 import { IcMessage } from "../lib/icons";
 import MessageModal from "../components/MessageModal";
+import LoadingAnimation from "../components/LoadingAnimation";
 import type { MsgTarget } from "../App";
 
 type ConversationRow = MsgTarget & {
@@ -23,7 +24,7 @@ export default function Messages() {
   const refresh = useCallback(async () => {
     if (!profile) return;
     setError("");
-    const { data: rows, error: conversationsError } = await supabase
+    const { data: rows, error: conversationsError } = await db
       .from("conversations")
       .select("*")
       .or(`buyer_id.eq.${profile.id},other_party_id.eq.${profile.id}`)
@@ -38,10 +39,10 @@ export default function Messages() {
       const peerId = conversation.buyer_id === profile.id ? conversation.other_party_id : conversation.buyer_id;
       const listingTable = conversation.listing_type === "product" ? "products" : conversation.listing_type === "property" ? "properties" : "services";
       const [peerResult, listingResult, latestResult, unreadResult] = await Promise.all([
-        supabase.from("profiles_public").select("full_name,avatar_url").eq("id", peerId).maybeSingle(),
-        supabase.from(listingTable).select("title").eq("id", conversation.listing_id).maybeSingle(),
-        supabase.from("messages").select("content,created_at").eq("conversation_id", conversation.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
-        supabase.from("messages").select("id", { count: "exact", head: true }).eq("conversation_id", conversation.id).is("read_at", null).neq("sender_id", profile.id),
+        db.from("profiles_public").select("full_name,avatar_url").eq("id", peerId).maybeSingle(),
+        db.from(listingTable).select("title").eq("id", conversation.listing_id).maybeSingle(),
+        db.from("messages").select("content,created_at").eq("conversation_id", conversation.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+        db.from("messages").select("id", { count: "exact", head: true }).eq("conversation_id", conversation.id).is("read_at", null).neq("sender_id", profile.id),
       ]);
       return {
         id: conversation.id,
@@ -65,19 +66,19 @@ export default function Messages() {
   useEffect(() => {
     if (!profile) {
       setLoading(false);
-      setError("Your Ziba profile could not be loaded. Sign out and sign back in; if this continues, check that your profile exists in Supabase.");
+      setError("Your Ziba profile could not be loaded. Sign out and sign back in; if this continues, check that your API and MongoDB connection are available.");
       return;
     }
     setLoading(true);
     setError("");
     void refresh();
-    const channel = supabase.channel(`inbox:${profile.id}`).on("postgres_changes", {
+    const channel = db.channel(`inbox:${profile.id}`).on("postgres_changes", {
       event: "INSERT", schema: "public", table: "messages",
     }, () => { void refresh(); }).subscribe();
-    return () => { void supabase.removeChannel(channel); };
+    return () => { void db.removeChannel(channel); };
   }, [profile, refresh]);
 
-  return <div className="max-w-7xl mx-auto px-5 md:px-10 py-8 min-h-screen">
+  return <div className="page-shell py-8 min-h-screen">
     <header className="mb-6">
       <p className="text-xs uppercase tracking-widest font-semibold mb-2" style={{ color: "var(--primary)" }}>Your inbox</p>
       <h1 className="font-display text-3xl md:text-4xl">Messages</h1>
@@ -89,7 +90,7 @@ export default function Messages() {
     <div className="grid lg:grid-cols-[minmax(260px,0.8fr)_minmax(0,1.5fr)] gap-4 items-start">
       <section className={`${active ? "hidden lg:block" : "block"} rounded-2xl border overflow-hidden min-h-[min(460px,calc(100dvh-12rem))]`} style={{ background: "var(--card)", borderColor: "var(--border)" }}>
         <div className="px-5 py-4 border-b font-semibold text-sm" style={{ borderColor: "var(--border)" }}>Conversations <span className="font-normal" style={{ color: "var(--muted-foreground)" }}>({conversations.length})</span></div>
-        {loading ? <p className="p-5 text-sm" style={{ color: "var(--muted-foreground)" }}>Loading conversations…</p> : conversations.length === 0 ? (
+        {loading ? <LoadingAnimation label="Loading conversations" /> : conversations.length === 0 ? (
           <div className="p-7 text-center">
             <span className="w-12 h-12 mx-auto mb-3 rounded-full flex items-center justify-center" style={{ background: "var(--secondary)", color: "var(--primary)" }}><IcMessage size={19}/></span>
             <p className="font-medium text-sm">No conversations yet</p>

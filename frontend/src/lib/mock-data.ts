@@ -1,4 +1,4 @@
-import type { Product, Property, Service } from "./supabase";
+import type { Product, Property, Service } from "./models";
 
 const mockProfile = (name: string, rating: number, reviews: number) => ({
   full_name: name,

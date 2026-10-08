@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { supabase, type Product, type Property, type Service } from "../lib/supabase";
+import { db } from "../lib/client";
+import { type Product, type Property, type Service } from "../lib/models";
 import { mockProducts, mockProperties, mockServices } from "../lib/mock-data";
 
 const FALLBACK_PRODUCT_IMAGES = [
@@ -50,7 +51,7 @@ export function useProducts(limit = 6) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase
+    db
       .from("products")
       .select("*, product_images(storage_path, sort_order), profiles:profiles_public(full_name,rating_avg,review_count,seller_verified)")
       .eq("status", "active")
@@ -70,7 +71,7 @@ export function useProperties(limit = 6) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase
+    db
       .from("properties")
       .select("*, property_images(storage_path, sort_order), profiles:profiles_public(full_name,rating_avg,review_count,landlord_verified)")
       .eq("status", "active")
@@ -91,7 +92,7 @@ export function useServices(limit = 6) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase
+    db
       .from("services")
       .select("*, profiles:profiles_public(full_name,rating_avg,review_count,service_provider_verified)")
       .eq("status", "active")

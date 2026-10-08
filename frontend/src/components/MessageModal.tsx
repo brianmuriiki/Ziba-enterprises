@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef } from "react";
-import { supabase, type Message } from "../lib/supabase";
+import { db } from "../lib/client";
+import { type Message } from "../lib/models";
 import { IcImage, IcSend } from "../lib/icons";
 import { useAuth } from "../lib/auth-context";
+import { REPORT_REASONS } from "../lib/report-reasons";
+import SafetyNotice from "./SafetyNotice";
 
 interface Props {
   listingType: "product" | "property" | "service";
@@ -24,12 +27,13 @@ export default function MessageModal({ listingType, listingId, otherPartyId, oth
   const [error, setError] = useState("");
   const [reportingMessage, setReportingMessage] = useState<string | null>(null);
   const [reportReason, setReportReason] = useState("");
+  const [reportCode, setReportCode] = useState<string>(REPORT_REASONS[0][0]);
   const [attachment, setAttachment] = useState<File | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   async function withSignedAttachment(message: Message): Promise<Message> {
     if (!message.attachment_url || message.attachment_url.startsWith("http")) return message;
-    const { data } = await supabase.storage.from("private-chat-attachments").createSignedUrl(message.attachment_url, 3600);
+    const { data } = await db.storage.from("private-chat-attachments").createSignedUrl(message.attachment_url, 3600);
     return { ...message, attachment_url: data?.signedUrl || null };
   }
 
@@ -40,27 +44,29 @@ export default function MessageModal({ listingType, listingId, otherPartyId, oth
       return;
     }
     let cancelled = false;
-    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let channel: ReturnType<typeof db.channel> | null = null;
     setLoading(true);
     setError("");
     async function init() {
       try {
         let conv: { id: string } | null = null;
         if (existingConversationId) {
-          const { data, error } = await supabase.from("conversations").select("id").eq("id", existingConversationId).maybeSingle();
+          const { data, error } = await db.from("conversations").select("id").eq("id", existingConversationId).maybeSingle();
           if (error) throw error;
           conv = data;
         } else {
-          const { data, error } = await supabase.from("conversations").select("id").eq("listing_type", listingType).eq("listing_id", listingId)
-            .or(`and(buyer_id.eq.${profile.id},other_party_id.eq.${otherPartyId}),and(buyer_id.eq.${otherPartyId},other_party_id.eq.${profile.id})`).maybeSingle();
+          const { data, error } = await db.from("conversations").select("id").eq("listing_type", listingType).eq("listing_id", listingId)
+            .or(`and(buyer_id.eq.${profile.id},other_party_id.eq.${otherPartyId}),and(buyer_id.eq.${otherPartyId},other_party_id.eq.${profile.id})`)
+            .order("created_at", { ascending: true }).limit(1).maybeSingle();
           if (error) throw error;
           conv = data;
         }
+        if (cancelled) return;
         if (!conv && profile.id !== otherPartyId) {
-          const { data, error } = await supabase.from("conversations").insert({ listing_type: listingType, listing_id: listingId, buyer_id: profile.id, other_party_id: otherPartyId }).select("id").single();
+          const { data, error } = await db.from("conversations").insert({ listing_type: listingType, listing_id: listingId, buyer_id: profile.id, other_party_id: otherPartyId }).select("id").single();
           if (error?.code === "23505") {
             // A concurrent open may have created this conversation after our lookup.
-            const { data: existing, error: lookupError } = await supabase.from("conversations").select("id")
+            const { data: existing, error: lookupError } = await db.from("conversations").select("id")
               .eq("listing_type", listingType).eq("listing_id", listingId)
               .or(`and(buyer_id.eq.${profile.id},other_party_id.eq.${otherPartyId}),and(buyer_id.eq.${otherPartyId},other_party_id.eq.${profile.id})`).maybeSingle();
             if (lookupError) throw lookupError;
@@ -74,23 +80,23 @@ export default function MessageModal({ listingType, listingId, otherPartyId, oth
         if (!conv) throw new Error("This conversation could not be opened.");
         if (cancelled) return;
         setConversationId(conv.id);
-        const { data: msgs, error: messagesError } = await supabase.from("messages").select("*, profiles:profiles_public(full_name, avatar_url)").eq("conversation_id", conv.id).order("created_at", { ascending: true });
+        const { data: msgs, error: messagesError } = await db.from("messages").select("*, profiles:profiles_public(full_name, avatar_url)").eq("conversation_id", conv.id).order("created_at", { ascending: true });
         if (messagesError) throw messagesError;
         if (cancelled) return;
         setMessages(await Promise.all((msgs || []).map((message) => withSignedAttachment(message))));
         const readAt = new Date().toISOString();
-        const { error: markReadError } = await supabase.from("messages").update({ read_at: readAt })
+        const { error: markReadError } = await db.from("messages").update({ read_at: readAt })
           .eq("conversation_id", conv.id).is("read_at", null).neq("sender_id", profile.id);
         if (markReadError) throw markReadError;
-        channel = supabase.channel(`messages:${conv.id}`)
+        channel = db.channel(`messages:${conv.id}`)
           .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${conv.id}` }, async (payload) => {
-          const { data } = await supabase.from("messages").select("*, profiles:profiles_public(full_name, avatar_url)").eq("id", payload.new.id).single();
+          const { data } = await db.from("messages").select("*, profiles:profiles_public(full_name, avatar_url)").eq("id", payload.new.id).single();
           if (data) {
             let readyMessage = await withSignedAttachment(data);
             setMessages((previous) => previous.some((message) => message.id === data.id) ? previous : [...previous, readyMessage]);
             if (data.sender_id !== profile.id) {
               const readAt = new Date().toISOString();
-              const { error: markReadError } = await supabase.from("messages").update({ read_at: readAt }).eq("id", data.id).is("read_at", null);
+              const { error: markReadError } = await db.from("messages").update({ read_at: readAt }).eq("id", data.id).is("read_at", null);
               if (!markReadError) {
                 readyMessage = { ...readyMessage, read_at: readAt };
                 setMessages((previous) => previous.map((message) => message.id === data.id ? readyMessage : message));
@@ -110,7 +116,7 @@ export default function MessageModal({ listingType, listingId, otherPartyId, oth
       }
     }
     init();
-    return () => { cancelled = true; if (channel) void supabase.removeChannel(channel); };
+    return () => { cancelled = true; if (channel) void db.removeChannel(channel); };
   }, [profile, listingType, listingId, otherPartyId, existingConversationId]);
 
   useEffect(() => {
@@ -129,10 +135,10 @@ export default function MessageModal({ listingType, listingId, otherPartyId, oth
         if (attachment.size > 10 * 1024 * 1024) throw new Error("Images must be 10 MB or smaller.");
         const extension = attachment.name.split(".").pop() || "jpg";
         attachmentPath = `${conversationId}/${profile.id}/${Date.now()}-${crypto.randomUUID()}.${extension}`;
-        const { error: uploadError } = await supabase.storage.from("private-chat-attachments").upload(attachmentPath, attachment, { contentType: attachment.type, upsert: false });
+        const { error: uploadError } = await db.storage.from("private-chat-attachments").upload(attachmentPath, attachment, { contentType: attachment.type, upsert: false });
         if (uploadError) throw uploadError;
       }
-      const { data: savedMessage, error: insertError } = await supabase.from("messages").insert({
+      const { data: savedMessage, error: insertError } = await db.from("messages").insert({
         conversation_id: conversationId,
         sender_id: profile.id,
         content: text.trim() || "Photo attachment",
@@ -153,9 +159,9 @@ export default function MessageModal({ listingType, listingId, otherPartyId, oth
 
   async function reportMessage(messageId: string) {
     if (!profile || reportReason.trim().length < 10) { setError("Please describe the concern in at least 10 characters."); return; }
-    const { error: reportError } = await supabase.from("reports").insert({ target_type: "message", target_id: messageId, reported_by: profile.id, reason: reportReason.trim() });
+    const { error: reportError } = await db.from("reports").insert({ target_type: "message", target_id: messageId, reported_by: profile.id, reason_code: reportCode, reason: reportReason.trim() });
     if (reportError) setError(reportError.message);
-    else { setError("Message sent to the moderation team."); setReportingMessage(null); setReportReason(""); }
+    else { setError("Message sent to the moderation team."); setReportingMessage(null); setReportReason(""); setReportCode(REPORT_REASONS[0][0]); }
   }
 
   function formatTime(ts: string) {
@@ -183,6 +189,7 @@ export default function MessageModal({ listingType, listingId, otherPartyId, oth
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+          <SafetyNotice>Keep conversations here so you can report them if needed. Never share your PIN or one-time codes, and confirm any payment directly in your own account.</SafetyNotice>
           {error && <div className="text-xs p-2 rounded-lg" style={{ background: "#FEE2E2", color: "#991B1B" }}>{error}</div>}
           {loading ? (
             <div className="flex items-center justify-center h-full">
@@ -214,7 +221,7 @@ export default function MessageModal({ listingType, listingId, otherPartyId, oth
                       {formatTime(msg.created_at)}{isMine && msg.read_at && <span> · Read</span>}
                     </div>
                     {!isMine && <button onClick={() => { setReportingMessage(reportingMessage === msg.id ? null : msg.id); setError(""); }} className="text-[11px] mt-1 px-1 underline" style={{ color: "var(--muted-foreground)" }}>Report message</button>}
-                    {reportingMessage === msg.id && <div className="mt-2"><textarea value={reportReason} onChange={(event) => setReportReason(event.target.value)} rows={2} placeholder="Tell us what is concerning" className="input-base resize-none text-xs"/><button onClick={() => reportMessage(msg.id)} className="mt-1 px-3 py-1 rounded-full text-xs font-semibold" style={{ background: "var(--primary)", color: "white" }}>Send report</button></div>}
+                    {reportingMessage === msg.id && <div className="mt-2 space-y-2"><select value={reportCode} onChange={(event) => setReportCode(event.target.value)} className="input-base text-xs">{REPORT_REASONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><textarea value={reportReason} onChange={(event) => setReportReason(event.target.value)} maxLength={2000} rows={2} placeholder="Describe what concerns you (at least 10 characters)." className="input-base resize-none text-xs"/><button onClick={() => reportMessage(msg.id)} className="mt-1 px-3 py-1 rounded-full text-xs font-semibold" style={{ background: "var(--primary)", color: "white" }}>Send report</button></div>}
                   </div>
                 </div>
               );

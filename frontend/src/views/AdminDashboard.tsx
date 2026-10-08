@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { IcCheck, IcEye, IcMessage, IcSearch, IcSettings, IcShield, IcTrash, IcX } from "../lib/icons";
+import LoadingAnimation from "../components/LoadingAnimation";
 
 type AdminTab = "verifications" | "users" | "listings" | "moderation" | "analytics" | "notifications";
 type NotificationAudience = "all" | "buyers" | "sellers" | "service_providers" | "landlords";
@@ -73,10 +74,17 @@ export default function AdminDashboard() {
   }
 
   async function openDocument(path: string) {
+    const documentWindow = window.open("about:blank", "_blank");
+    if (!documentWindow) {
+      setError("Allow pop-ups for this site to view applicant documents.");
+      return;
+    }
+    documentWindow.opener = null;
     try {
       const result = await api.signedUrl(token, path);
-      window.open(result.url, "_blank", "noopener,noreferrer");
+      documentWindow.location.href = result.signedUrl;
     } catch (err: any) {
+      documentWindow.close();
       setError(err.message || "Could not open document.");
     }
   }
@@ -139,7 +147,7 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: "var(--background)" }}>
-      <div className="max-w-7xl mx-auto px-5 md:px-10 py-8">
+      <div className="page-shell py-8">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-5 mb-8">
           <div>
             <div className="flex items-center gap-2 mb-1">
@@ -272,8 +280,9 @@ export default function AdminDashboard() {
                       <div className="min-w-0">
                         <div className="font-medium text-sm truncate">{listing.title}</div>
                         <div className="text-xs capitalize" style={{ color: "var(--muted-foreground)" }}>{listing.type} · {listing.profiles?.full_name || "Unknown owner"} · {new Date(listing.created_at).toLocaleDateString()}</div>
+                        {listing.risk_flags?.length > 0 && <p className="mt-1 text-xs font-medium text-amber-800">Needs review: {listing.risk_flags.map((flag: string) => flag.replaceAll("_", " ")).join(", ")}</p>}
                         <p className="mt-1 text-xs line-clamp-2" style={{ color: "var(--muted-foreground)" }}>{listing.description}</p>
-                        <div className="mt-1 text-xs font-medium" style={{ color: "var(--primary)" }}>{listing.type === "service" ? listing.price_range : `KES ${Number(listing.price).toLocaleString()}`}{listing.type === "property" ? " / month" : ""}</div>
+                        <div className="mt-1 text-xs font-medium" style={{ color: "var(--primary)" }}>{listing.type === "service" ? listing.price_range : `KES ${Number(listing.price).toLocaleString()}`}{listing.type === "property" ? listing.transaction_type === "sale" ? " · sale price" : " / month" : ""}</div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <Status text={listing.status} tone={["active", "available"].includes(listing.status) ? "green" : "muted"} />
@@ -292,7 +301,7 @@ export default function AdminDashboard() {
                 {overview.reports.map((report) => (
                   <section key={report.id} className="p-5 rounded-2xl border flex flex-col md:flex-row md:items-center justify-between gap-4" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
                     <div>
-                      <div className="flex items-center gap-2 mb-1"><Status text={report.status} tone={report.status === "open" ? "amber" : "muted"} /><span className="text-xs capitalize" style={{ color: "var(--muted-foreground)" }}>{report.target_type}</span></div>
+                      <div className="flex items-center gap-2 mb-1"><Status text={report.status} tone={["open", "investigating"].includes(report.status) ? "amber" : "muted"} /><span className="text-xs capitalize" style={{ color: "var(--muted-foreground)" }}>{report.reason_code?.replaceAll("_", " ") || report.target_type}</span></div>
                       <p className="text-sm">{report.reason}</p>
                       <p className="text-xs mt-1" style={{ color: "var(--muted-foreground)" }}>Reported by {report.profiles?.full_name || "a community member"} · {new Date(report.created_at).toLocaleString()}</p>
                       {report.target ? <div className="mt-3 p-3 rounded-xl border text-sm" style={{ background: "var(--secondary)", borderColor: "var(--border)" }}>
@@ -301,11 +310,16 @@ export default function AdminDashboard() {
                         {report.target.kind === "profile" && <><b>Reported account: {report.target.full_name || "Unnamed user"}</b><p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>{report.target.phone || "No phone"} · Account {report.target.account_status}</p></>}
                       </div> : <p className="mt-2 text-xs" style={{ color: "var(--muted-foreground)" }}>The reported content is no longer available.</p>}
                     </div>
-                    {report.status === "open" && <div className="flex gap-2">
-                      <button onClick={() => run(() => api.adminReportStatus(token, report.id, "resolved", resolutionNotes[report.id] || "", "take_down"))} className="px-3 py-1.5 rounded-full text-xs font-semibold" style={{ backgroundColor: "var(--accent)", color: "white" }}>Take down &amp; resolve</button>
-                      <button onClick={() => run(() => api.adminReportStatus(token, report.id, "dismissed"))} className="px-3 py-1.5 rounded-full border text-xs font-medium" style={{ borderColor: "var(--border)" }}>Dismiss</button>
+                    {["open", "investigating"].includes(report.status) && <div className="flex flex-wrap gap-2">
+                      {report.target?.kind === "listing" && <>
+                        <button onClick={() => run(() => api.adminReportStatus(token, report.id, "investigating", resolutionNotes[report.id] || "", "hide"))} className="px-3 py-1.5 rounded-full border text-xs font-medium" style={{ borderColor: "var(--primary)", color: "var(--primary)" }}>Hide &amp; investigate</button>
+                        <button onClick={() => run(() => api.adminReportStatus(token, report.id, "resolved", resolutionNotes[report.id] || "", "take_down"))} className="px-3 py-1.5 rounded-full text-xs font-semibold" style={{ backgroundColor: "var(--accent)", color: "white" }}>Take down &amp; resolve</button>
+                      </>}
+                      {report.target?.kind !== "listing" && <button onClick={() => run(() => api.adminReportStatus(token, report.id, "resolved", resolutionNotes[report.id] || ""))} className="px-3 py-1.5 rounded-full text-xs font-semibold" style={{ backgroundColor: "var(--accent)", color: "white" }}>Resolve report</button>}
+                      {["profile", "message"].includes(report.target?.kind) && <button onClick={() => run(() => api.adminReportStatus(token, report.id, "resolved", resolutionNotes[report.id] || "", "suspend_account"))} className="px-3 py-1.5 rounded-full border text-xs font-semibold text-red-700" style={{ borderColor: "#FECACA" }}>Suspend account &amp; resolve</button>}
+                      <button onClick={() => run(() => api.adminReportStatus(token, report.id, "dismissed", resolutionNotes[report.id] || ""))} className="px-3 py-1.5 rounded-full border text-xs font-medium" style={{ borderColor: "var(--border)" }}>Dismiss</button>
                     </div>}
-                    {report.status === "open" && <textarea value={resolutionNotes[report.id] || ""} onChange={(event) => setResolutionNotes((notes) => ({ ...notes, [report.id]: event.target.value }))} maxLength={1000} rows={2} placeholder="Internal resolution note (optional)" className="input-base md:max-w-xs text-xs" style={{ background: "var(--secondary)" }} />}
+                    {["open", "investigating"].includes(report.status) && <textarea value={resolutionNotes[report.id] || ""} onChange={(event) => setResolutionNotes((notes) => ({ ...notes, [report.id]: event.target.value }))} maxLength={1000} rows={2} placeholder="Internal resolution note (optional)" className="input-base md:max-w-xs text-xs" style={{ background: "var(--secondary)" }} />}
                     {report.status !== "open" && report.resolution_note && <p className="text-xs mt-2" style={{ color: "var(--muted-foreground)" }}>Review note: {report.resolution_note}</p>}
                   </section>
                 ))}
@@ -335,7 +349,7 @@ export default function AdminDashboard() {
                 </div>
                 <div className="mt-5 p-5 rounded-2xl border" style={{ backgroundColor: "var(--secondary)", borderColor: "var(--border)" }}>
                   <div className="font-semibold text-sm">Operations note</div>
-                  <p className="text-xs mt-1 leading-relaxed" style={{ color: "var(--muted-foreground)" }}>Counts are live from Supabase. Verification documents use short-lived signed links, and all admin actions are checked server-side against the approved admin role.</p>
+                  <p className="text-xs mt-1 leading-relaxed" style={{ color: "var(--muted-foreground)" }}>Counts are live from MongoDB. Verification documents are served through the API, and admin actions require an admin account.</p>
                 </div>
               </div>
             )}
@@ -382,7 +396,7 @@ function Status({ text, tone }: { text: string; tone: "green" | "amber" | "muted
 }
 
 function Loading() {
-  return <div className="text-center py-16 text-sm animate-pulse" style={{ color: "var(--muted-foreground)" }}>Loading marketplace operations…</div>;
+  return <LoadingAnimation label="Loading marketplace operations" />;
 }
 
 function Empty({ title, body }: { title: string; body: string }) {

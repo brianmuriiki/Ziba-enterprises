@@ -11,9 +11,9 @@ export default function InfoPages({ page, onNavigate }: Props) {
   const cards = isTrust
     ? [
         ["Verified listers", "Sellers and landlords go through identity checks before they can list."],
-        ["Protected documents", "Verification files are kept in protected storage."],
-        ["Community reports", "Report a concern so our team can review the listing."],
-        ["Reviews with context", "Reviews are connected to completed requests."],
+        ["Protected documents", "Identity documents use private storage and can only be opened by platform reviewers."],
+        ["Community reports", "Report listings, accounts, or messages with a reason so our team can investigate."],
+        ["Reviews with context", "Only the buyer on a completed marketplace request can leave one review for that request."],
       ]
     : [
         ["Find your fit", "Browse goods, homes, and services in one place."],
@@ -23,7 +23,7 @@ export default function InfoPages({ page, onNavigate }: Props) {
       ];
 
   return (
-    <main className="max-w-5xl mx-auto px-5 md:px-10 py-12 md:py-20">
+    <main className="page-shell py-12 md:py-20">
       <button type="button" onClick={() => onNavigate("landing")} className="text-sm font-medium mb-8 hover:underline" style={{ color: "var(--primary)" }}>← Back to Ziba</button>
       <section className="rounded-[2rem] p-8 md:p-14" style={{ background: isTrust ? "#1A2925" : "var(--secondary)", color: isTrust ? "white" : "var(--foreground)" }}>
         <div className="flex items-center gap-2 text-xs uppercase tracking-widest font-semibold mb-4" style={{ color: isTrust ? "#E8A267" : "var(--primary)" }}>{isTrust && <IcShieldCheck size={15} />}{isTrust ? "Trust & Safety" : "About Ziba"}</div>

@@ -4,14 +4,14 @@ import type { View } from "./Nav";
 interface Props {
   onNavigate: (view: View) => void;
   onBrowse: (tab: string) => void;
-  onApply: (role: "seller" | "landlord" | "service_provider") => void;
+  onApply: () => void;
   onTrustSafety: () => void;
 }
 
 export default function SiteFooter({ onNavigate, onBrowse, onApply, onTrustSafety }: Props) {
   return (
     <footer className="border-t" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-      <div className="max-w-7xl mx-auto px-5 md:px-10 py-12 md:py-16">
+      <div className="page-shell py-12 md:py-16">
         <div className="grid grid-cols-2 md:grid-cols-5 gap-x-8 gap-y-10">
           <div className="col-span-2 md:col-span-1">
             <button type="button" onClick={() => { onNavigate("landing"); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="font-display text-2xl font-semibold mb-3" style={{ color: "var(--primary)" }}>Ziba</button>
@@ -21,11 +21,10 @@ export default function SiteFooter({ onNavigate, onBrowse, onApply, onTrustSafet
             <FooterLink onClick={() => onBrowse("Products")}>Products</FooterLink>
             <FooterLink onClick={() => onBrowse("Properties")}>Properties</FooterLink>
             <FooterLink onClick={() => onBrowse("Services")}>Services</FooterLink>
+            <FooterLink onClick={() => onNavigate("hot-deals")}>Hot Deals</FooterLink>
           </FooterGroup>
-          <FooterGroup title="Sellers">
-            <FooterLink onClick={() => onApply("seller")}>Become a Seller</FooterLink>
-            <FooterLink onClick={() => onApply("landlord")}>Landlord Portal</FooterLink>
-            <FooterLink onClick={() => onApply("service_provider")}>Service Providers</FooterLink>
+          <FooterGroup title="Join Ziba">
+            <FooterLink onClick={onApply}>Role Applications</FooterLink>
           </FooterGroup>
           <FooterGroup title="Company">
             <FooterLink onClick={() => onNavigate("about")}>About Ziba</FooterLink>

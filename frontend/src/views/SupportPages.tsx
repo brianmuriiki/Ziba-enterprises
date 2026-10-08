@@ -5,7 +5,7 @@ type SupportPage = "help" | "contact" | "report";
 
 interface Props {
   page: SupportPage;
-  onNavigate: (page: "landing" | "browse") => void;
+  onNavigate: (page: "landing" | "browse" | "contact") => void;
 }
 
 const questions = [
@@ -13,6 +13,8 @@ const questions = [
   ["How are listers verified?", "Sellers and landlords apply to list, and our team reviews their identity before approval."],
   ["How do I contact a lister?", "Open a listing and choose Contact lister to start a private conversation."],
   ["How do I report a listing?", "Open the listing, choose Report, and tell our moderation team what concerns you."],
+  ["How can I avoid payment scams?", "Inspect the item or view the home before paying. Confirm money in your own account instead of trusting a screenshot. Never share a PIN or one-time code. Ziba does not collect payments on listing pages."],
+  ["Is a verified badge a guarantee?", "No. Verification means Ziba reviewed the lister’s submitted information. Still check the listing and agree on safe arrangements before paying."],
 ];
 
 export default function SupportPages({ page, onNavigate }: Props) {
@@ -21,7 +23,7 @@ export default function SupportPages({ page, onNavigate }: Props) {
   const eyebrow = page === "help" ? "Answers and guidance" : page === "contact" ? "We’re here to help" : "Help keep Ziba trusted";
 
   return (
-    <main className="max-w-4xl mx-auto px-5 md:px-10 py-12 md:py-20">
+    <main className="page-shell py-12 md:py-20">
       <button type="button" onClick={() => onNavigate("landing")} className="text-sm font-medium mb-8 hover:underline" style={{ color: "var(--primary)" }}>← Back to Ziba</button>
       <div className="mb-10">
         <p className="text-xs uppercase tracking-widest font-semibold mb-2" style={{ color: "var(--primary)" }}>{eyebrow}</p>

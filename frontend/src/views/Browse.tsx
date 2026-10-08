@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { supabase, type Product, type Property, type Service } from "../lib/supabase";
+import { db } from "../lib/client";
+import { type Product, type Property, type Service } from "../lib/models";
 import { getProductImage, getPropertyImage, getServiceImage } from "../hooks/useListings";
 import { IcSearch, IcFilter, IcMapPin, IcCheck, IcMessage, IcX, IcStar, IcChevronDown } from "../lib/icons";
 import { useAuth } from "../lib/auth-context";
@@ -28,11 +29,13 @@ export default function Browse({ activeTab, setActiveTab, onMessage, onSignInReq
   const { user } = useAuth();
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
+  const [propertyTransactionType, setPropertyTransactionType] = useState("");
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
   const [location, setLocation] = useState("");
   const [sortBy, setSortBy] = useState("newest");
   const [showFilters, setShowFilters] = useState(false);
+  const [savedSearchFeedback, setSavedSearchFeedback] = useState("");
 
   const [products, setProducts] = useState<Product[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
@@ -40,35 +43,36 @@ export default function Browse({ activeTab, setActiveTab, onMessage, onSignInReq
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (activeTab === "Products" && sortBy === "location_asc") {
-      setSortBy("newest");
-      return;
-    }
     setLoading(true);
     const timer = setTimeout(() => loadListings(), 300);
     return () => clearTimeout(timer);
-  }, [activeTab, search, category, priceMin, priceMax, location, sortBy]);
+  }, [activeTab, search, category, propertyTransactionType, priceMin, priceMax, location, sortBy]);
 
   async function loadListings() {
     setLoading(true);
     if (activeTab === "Products") {
-      let q = supabase.from("products").select("*, product_images(storage_path, sort_order), profiles:profiles_public(full_name,rating_avg,review_count,seller_verified)").eq("status", "active");
+      let q = db.from("products").select("*, product_images(storage_path, sort_order), profiles:profiles_public(full_name,rating_avg,review_count,seller_verified)").eq("status", "active");
       if (search) q = q.textSearch("search_vector", search, { type: "websearch", config: "simple" });
       if (category) q = q.eq("category", category);
+      if (location) q = q.ilike("location", `%${location}%`);
       if (priceMin) q = q.gte("price", parseFloat(priceMin));
       if (priceMax) q = q.lte("price", parseFloat(priceMax));
       if (sortBy === "price_asc") q = q.order("price", { ascending: true });
       else if (sortBy === "price_desc") q = q.order("price", { ascending: false });
+      else if (sortBy === "location_asc") q = q.order("location", { ascending: true });
       else q = q.order("created_at", { ascending: false });
       const { data } = await q.limit(24);
       setProducts(data?.length ? data : mockProducts.filter((item) =>
         (!search || `${item.title} ${item.description} ${item.category}`.toLowerCase().includes(search.toLowerCase())) &&
         (!category || item.category === category) &&
+        (!location || String((item as any).location || "").toLowerCase().includes(location.toLowerCase())) &&
         (!priceMin || item.price >= Number(priceMin)) &&
         (!priceMax || item.price <= Number(priceMax))
       ));
     } else if (activeTab === "Properties") {
-      let q = supabase.from("properties").select("*, property_images(storage_path, sort_order), profiles:profiles_public(full_name,rating_avg,review_count,landlord_verified)").eq("status", "active").eq("availability_status", "available");
+      let q = db.from("properties").select("*, property_images(storage_path, sort_order), profiles:profiles_public(full_name,rating_avg,review_count,landlord_verified)").eq("status", "active").eq("availability_status", "available");
+      if (propertyTransactionType === "sale") q = q.eq("transaction_type", "sale");
+      else if (propertyTransactionType === "rent") q = q.or("transaction_type.eq.rent,transaction_type.is.null");
       if (search) q = q.textSearch("search_vector", search, { type: "websearch", config: "simple" });
       if (category) q = q.eq("house_type", category);
       if (priceMin) q = q.gte("price", parseFloat(priceMin));
@@ -82,6 +86,7 @@ export default function Browse({ activeTab, setActiveTab, onMessage, onSignInReq
       const fallbackProperties = mockProperties.filter((item) =>
         (!search || `${item.title} ${item.description} ${item.location}`.toLowerCase().includes(search.toLowerCase())) &&
         (!category || item.house_type === category) &&
+        (!propertyTransactionType || (item.transaction_type || "rent") === propertyTransactionType) &&
         (!priceMin || item.price >= Number(priceMin)) &&
         (!priceMax || item.price <= Number(priceMax)) &&
         (!location || item.location.toLowerCase().includes(location.toLowerCase()))
@@ -91,15 +96,17 @@ export default function Browse({ activeTab, setActiveTab, onMessage, onSignInReq
       else if (sortBy === "price_desc") fallbackProperties.sort((a, b) => b.price - a.price);
       setProperties(data?.length ? data : fallbackProperties);
     } else {
-      let q = supabase.from("services").select("*, profiles:profiles_public(full_name,rating_avg,review_count,service_provider_verified)").eq("status", "active");
+      let q = db.from("services").select("*, profiles:profiles_public(full_name,rating_avg,review_count,service_provider_verified)").eq("status", "active");
       if (search) q = q.textSearch("search_vector", search, { type: "websearch", config: "simple" });
       if (category) q = q.eq("category", category);
+      if (location) q = q.ilike("service_area", `%${location}%`);
       if (sortBy === "location_asc") q = q.order("service_area", { ascending: true, nullsFirst: false });
       else if (sortBy === "newest") q = q.order("created_at", { ascending: false });
       const { data } = await q.limit(24);
       const fallbackServices = mockServices.filter((item) =>
         (!search || `${item.title} ${item.description} ${item.category} ${item.service_area || ""}`.toLowerCase().includes(search.toLowerCase())) &&
         (!category || item.category === category)
+        && (!location || String(item.service_area || "").toLowerCase().includes(location.toLowerCase()))
       );
       if (sortBy === "location_asc") fallbackServices.sort((a, b) => (a.service_area || "").localeCompare(b.service_area || ""));
       setServices(data?.length ? data : fallbackServices);
@@ -108,26 +115,34 @@ export default function Browse({ activeTab, setActiveTab, onMessage, onSignInReq
   }
 
   function clearFilters() {
-    setSearch(""); setCategory(""); setPriceMin(""); setPriceMax(""); setLocation(""); setSortBy("newest");
+    setSearch(""); setCategory(""); setPropertyTransactionType(""); setPriceMin(""); setPriceMax(""); setLocation(""); setSortBy("newest");
+  }
+
+  async function saveSearch() {
+    if (!user) { onSignInRequired(); return; }
+    setSavedSearchFeedback("");
+    const listingType = activeTab === "Products" ? "product" : activeTab === "Properties" ? "property" : "service";
+    const { error } = await db.from("saved_searches").insert({ listing_type: listingType, criteria: { query: search.trim(), category, location: location.trim(), min_price: priceMin, max_price: priceMax, transaction_type: propertyTransactionType } });
+    setSavedSearchFeedback(error?.message || "Search saved. We’ll notify you when a matching listing appears.");
   }
 
   const fixedCategories = activeTab === "Products" ? PRODUCT_CATEGORIES : activeTab === "Properties" ? PROPERTY_TYPES : SERVICE_CATEGORIES;
   const listingCategories = activeTab === "Products" ? products.map((item) => item.category) : activeTab === "Properties" ? properties.map((item) => item.house_type) : services.map((item) => item.category);
   const cats = [...new Set([...fixedCategories, ...listingCategories])];
-  const hasFilters = search || category || priceMin || priceMax || location;
+  const hasFilters = search || category || propertyTransactionType || priceMin || priceMax || location;
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: "var(--background)" }}>
       {/* Search bar hero */}
       <div className="border-b py-8" style={{ borderColor: "var(--border)", backgroundColor: "var(--secondary)" }}>
-        <div className="max-w-7xl mx-auto px-5 md:px-10">
+        <div className="page-shell">
           <h1 className="font-display text-3xl font-semibold mb-5" style={{ color: "var(--foreground)" }}>
             Browse {activeTab}
           </h1>
           {/* Tab selector */}
           <div className="flex gap-2 mb-5 flex-wrap">
             {["Products", "Properties", "Services"].map((t) => (
-              <button key={t} onClick={() => { setActiveTab(t); setCategory(""); if (t === "Products" && sortBy === "location_asc") setSortBy("newest"); }}
+              <button key={t} onClick={() => { setActiveTab(t); setCategory(""); }}
                 className="px-4 py-2 rounded-full text-sm font-medium border transition-all"
                 style={activeTab === t ? { backgroundColor: "var(--primary)", color: "#fff", borderColor: "var(--primary)" } : { borderColor: "var(--border)", color: "var(--foreground)" }}>
                 {t}
@@ -165,13 +180,24 @@ export default function Browse({ activeTab, setActiveTab, onMessage, onSignInReq
               <option value="newest">Newest</option>
               <option value="price_asc">Price: Low → High</option>
               <option value="price_desc">Price: High → Low</option>
-              {activeTab !== "Products" && <option value="location_asc">Location: A–Z</option>}
+              <option value="location_asc">Location: A–Z</option>
             </select>
           </div>
 
           {/* Filter panel */}
           {showFilters && (
             <div className="mt-4 p-4 rounded-xl border flex flex-wrap gap-4" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
+              {/* Category */}
+              {activeTab === "Properties" && (
+                <div className="min-w-[160px]">
+                  <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--muted-foreground)" }}>Listing type</label>
+                  <select value={propertyTransactionType} onChange={(e) => setPropertyTransactionType(e.target.value)} className="w-full px-3 py-2 rounded-lg border text-sm outline-none" style={{ backgroundColor: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}>
+                    <option value="">Rent and sale</option>
+                    <option value="rent">For rent</option>
+                    <option value="sale">For sale</option>
+                  </select>
+                </div>
+              )}
               {/* Category */}
               <div className="min-w-[160px]">
                 <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--muted-foreground)" }}>{activeTab === "Properties" ? "House Type" : "Category"}</label>
@@ -200,14 +226,12 @@ export default function Browse({ activeTab, setActiveTab, onMessage, onSignInReq
                 </div>
               )}
               {/* Location */}
-              {activeTab === "Properties" && (
-                <div>
+              <div>
                   <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--muted-foreground)" }}>Location</label>
-                  <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. Nairobi"
+                  <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder={activeTab === "Properties" ? "e.g. Nairobi" : "e.g. Nairobi area"}
                     className="w-36 px-3 py-2 rounded-lg border text-sm outline-none"
                     style={{ backgroundColor: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} />
-                </div>
-              )}
+              </div>
               {hasFilters && (
                 <div className="flex items-end">
                   <button onClick={clearFilters} className="flex items-center gap-1 text-sm px-3 py-2 rounded-lg hover:bg-[var(--secondary)] transition-colors" style={{ color: "var(--muted-foreground)" }}>
@@ -221,9 +245,9 @@ export default function Browse({ activeTab, setActiveTab, onMessage, onSignInReq
       </div>
 
       {/* Results */}
-      <div className="max-w-7xl mx-auto px-5 md:px-10 py-8">
+      <div className="page-shell py-8">
         {loading ? (
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6">
             {Array.from({ length: 6 }).map((_, i) => (
               <div key={i} className="rounded-2xl overflow-hidden border" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
                 <div className="h-52 animate-pulse" style={{ backgroundColor: "var(--muted)" }} />
@@ -238,8 +262,13 @@ export default function Browse({ activeTab, setActiveTab, onMessage, onSignInReq
           <>
             <div className="mb-5 text-sm" style={{ color: "var(--muted-foreground)" }}>
               {activeTab === "Products" ? products.length : activeTab === "Properties" ? properties.length : services.length} {activeTab.toLowerCase()} found
+              <div className="flex flex-wrap items-center gap-3 mt-2">
+                {hasFilters && <button onClick={saveSearch} className="text-sm font-semibold underline" style={{ color: "var(--primary)" }}>Save this search &amp; get alerts</button>}
+                {(location || search) && <a href={`https://www.openstreetmap.org/search?query=${encodeURIComponent([location, search].filter(Boolean).join(" "))}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm underline" style={{ color: "var(--primary)" }}><IcMapPin size={14}/> View area on map</a>}
+              </div>
+              {savedSearchFeedback && <p className="mt-2 text-xs" role="status">{savedSearchFeedback}</p>}
             </div>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6">
               {activeTab === "Products" && products.map((item, i) => (
                 <ProductCard key={item.id} item={item} i={i} onDetail={() => onViewDetail({ ...item, _type: "product" })} onContact={() => {
                   if (!user) { onSignInRequired(); return; }
@@ -288,18 +317,19 @@ function ProductCard({ item, i, onDetail, onContact }: { item: Product; i: numbe
     <div className="group rounded-2xl overflow-hidden border transition-all duration-300 hover:-translate-y-1 hover:shadow-md cursor-pointer" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
       <div className="relative overflow-hidden h-52 bg-[var(--muted)]" onClick={onDetail}>
         <img src={getProductImage(item, 0)} alt={item.title} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
-        {item.profiles?.seller_verified && <div className="absolute top-3 left-3"><Badge variant="green"><IcCheck size={11} /> Verified</Badge></div>}
+        {(item.profiles?.seller_verified || Number(item.compare_at_price) > Number(item.price)) && <div className="absolute top-3 left-3 flex flex-wrap gap-1">{Number(item.compare_at_price) > Number(item.price) && <Badge variant="amber">Save {Math.round((1 - Number(item.price) / Number(item.compare_at_price)) * 100)}%</Badge>}{item.profiles?.seller_verified && <Badge variant="green"><IcCheck size={11} /> Verified</Badge>}</div>}
         <div className="absolute top-3 right-3"><Badge>{item.category}</Badge></div>
       </div>
       <div className="p-5">
         <div className="flex items-start justify-between gap-2 mb-2" onClick={onDetail}>
           <h3 className="font-medium text-sm leading-snug" style={{ color: "var(--foreground)" }}>{item.title}</h3>
-          <span className="font-mono-data text-sm font-medium shrink-0" style={{ color: "var(--primary)" }}>KES {Number(item.price).toLocaleString()}</span>
+          <span className="font-mono-data text-sm font-medium shrink-0 text-right" style={{ color: "var(--primary)" }}>KES {Number(item.price).toLocaleString()}{Number(item.compare_at_price) > Number(item.price) && <span className="block text-xs line-through font-normal" style={{ color: "var(--muted-foreground)" }}>KES {Number(item.compare_at_price).toLocaleString()}</span>}</span>
         </div>
         <div className="flex items-center justify-between mt-3">
           <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>{item.profiles?.full_name || "Seller"}{Number(item.profiles?.review_count) > 0 ? ` · ★ ${Number(item.profiles?.rating_avg).toFixed(1)} (${item.profiles?.review_count})` : " · New"}</span>
           <span className="text-xs font-mono-data" style={{ color: "var(--muted-foreground)" }}>Stock: {item.stock}</span>
         </div>
+        {item.location && <div className="flex items-center gap-1 mt-2 text-xs" style={{ color: "var(--muted-foreground)" }}><IcMapPin size={12}/>{item.location}</div>}
         <button onClick={onContact} disabled={isDemo} title={isDemo ? "Demo listings have no real seller to message" : undefined} className="mt-4 w-full py-2 rounded-xl text-sm font-medium flex items-center justify-center gap-2 border transition-colors hover:border-[var(--primary)] hover:text-[var(--primary)] disabled:cursor-not-allowed disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
           <IcMessage /> {isDemo ? "Demo listing" : "Contact Seller"}
         </button>
@@ -314,7 +344,7 @@ function PropertyCard({ item, i, onDetail, onContact }: { item: Property; i: num
     <div className="group rounded-2xl overflow-hidden border transition-all duration-300 hover:-translate-y-1 hover:shadow-md cursor-pointer" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
       <div className="relative overflow-hidden h-52 bg-[var(--muted)]" onClick={onDetail}>
         <img src={getPropertyImage(item, 0)} alt={item.title} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
-        <div className="absolute top-3 left-3 flex gap-1"><Badge variant="green">Available</Badge>{item.profiles?.landlord_verified && <Badge variant="green"><IcCheck size={11}/> Verified</Badge>}</div>
+        <div className="absolute top-3 left-3 flex gap-1"><Badge variant="green">For {(item.transaction_type || "rent") === "sale" ? "sale" : "rent"}</Badge>{item.profiles?.landlord_verified && <Badge variant="green"><IcCheck size={11}/> Verified</Badge>}</div>
         <div className="absolute top-3 right-3"><Badge>{item.house_type}</Badge></div>
       </div>
       <div className="p-5">
@@ -324,7 +354,7 @@ function PropertyCard({ item, i, onDetail, onContact }: { item: Property; i: num
           <div className="flex items-center gap-3 text-xs" style={{ color: "var(--muted-foreground)" }}>
             <span>{item.bedrooms} bed</span><span>·</span><span>{item.bathrooms} bath</span>
           </div>
-          <span className="font-mono-data text-sm font-medium" style={{ color: "var(--accent)" }}>KES {Number(item.price).toLocaleString()}/mo</span>
+          <span className="font-mono-data text-sm font-medium" style={{ color: "var(--accent)" }}>KES {Number(item.price).toLocaleString()}{(item.transaction_type || "rent") === "rent" ? "/mo" : ""}</span>
         </div>
         <button onClick={onContact} disabled={isDemo} title={isDemo ? "Demo listings have no real landlord to message" : undefined} className="mt-4 w-full py-2 rounded-xl text-sm font-medium flex items-center justify-center gap-2 border transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
           <IcMessage /> {isDemo ? "Demo listing" : "Inquire"}
@@ -346,6 +376,7 @@ function ServiceCard({ item, i, onDetail, onContact }: { item: Service; i: numbe
       <div className="p-5">
         <h3 className="font-medium text-sm leading-snug mb-1" style={{ color: "var(--foreground)" }} onClick={onDetail}>{item.title}</h3>
         <div className="text-xs mb-3" style={{ color: "var(--muted-foreground)" }}>{item.profiles?.full_name || "Provider"}</div>
+        {item.service_area && <div className="flex items-center gap-1 mb-3 text-xs" style={{ color: "var(--muted-foreground)" }}><IcMapPin size={12}/>{item.service_area}</div>}
         <div className="flex items-center justify-between">
           {Number(item.profiles?.review_count) > 0 ? <span className="flex items-center gap-1"><StarRow rating={Number(item.profiles?.rating_avg)} /><span className="text-[11px]" style={{ color: "var(--muted-foreground)" }}>{Number(item.profiles?.rating_avg).toFixed(1)} · {item.profiles?.review_count}</span></span> : <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>New provider</span>}
           <span className="font-mono-data text-sm font-medium" style={{ color: "#7C4DBC" }}>{item.price_range}</span>
