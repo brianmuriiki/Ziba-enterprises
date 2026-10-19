@@ -1,4 +1,11 @@
 {
+  "redirects": [
+    {
+      "source": "/downloads/ziba-android.apk",
+      "destination": "https://github.com/brianmuriiki/HideOut-creatives/releases/latest/download/Ziba-latest.apk",
+      "permanent": false
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",

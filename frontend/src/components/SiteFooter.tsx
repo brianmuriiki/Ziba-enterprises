@@ -16,6 +16,7 @@ export default function SiteFooter({ onNavigate, onBrowse, onApply, onTrustSafet
           <div className="col-span-2 md:col-span-1">
             <button type="button" onClick={() => { onNavigate("landing"); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="font-display text-2xl font-semibold mb-3" style={{ color: "var(--primary)" }}>Ziba</button>
             <p className="max-w-xs text-sm leading-relaxed" style={{ color: "var(--muted-foreground)" }}>East Africa&apos;s trusted marketplace for products, property, and services.</p>
+            <a href="/downloads/ziba-android.apk" download="ziba-android.apk" className="inline-flex mt-4 rounded-full px-4 py-2 text-sm font-semibold" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>Download Android app</a>
           </div>
           <FooterGroup title="Marketplace">
             <FooterLink onClick={() => onBrowse("Products")}>Products</FooterLink>
