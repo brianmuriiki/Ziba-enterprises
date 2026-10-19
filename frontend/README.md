@@ -6,4 +6,4 @@ Copy `.env.example` to `.env.local`, set `VITE_GOOGLE_CLIENT_ID` to the Web OAut
 
 ## Android app downloads
 
-The homepage and footer link to `/downloads/ziba-android.apk`. Vercel redirects that URL to the `Ziba-latest.apk` asset in the latest GitHub Release for `brianmuriiki/HideOut-creatives`. Upload the current signed APK to that release with the exact asset name `Ziba-latest.apk` to publish or update the download on both websites.
+The homepage and footer link to `/downloads/ziba-android.apk`. Vercel redirects that URL to the `Ziba-latest.apk` asset in the latest GitHub Release for `brianmuriiki/Ziba-enterprises`. Upload the current signed APK to that release with the exact asset name `Ziba-latest.apk`; the company website points to the same release asset.
